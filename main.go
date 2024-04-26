@@ -11,18 +11,6 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-func getData(m *model, message string) {
-	dataChannel := make(chan string)
-
-	go StreamRequest(message, dataChannel)
-
-	// m.response = ""
-	for data := range dataChannel {
-		print(data)
-		// m.response = m.response + data
-	}
-}
-
 func main() {
 	p := tea.NewProgram(initialModel())
 
@@ -32,17 +20,34 @@ func main() {
 }
 
 type (
-	errMsg error
+	errMsg      error
+	responseMsg string
+	completeMsg struct{}
 )
 
+func listenForMessage(channel chan string, message string) tea.Cmd {
+	return func() tea.Msg {
+		StreamRequest(message, channel)
+		return completeMsg{}
+	}
+}
+
+func waitForMessage(channel chan string) tea.Cmd {
+	return func() tea.Msg {
+		return responseMsg(<-channel)
+	}
+}
+
 type model struct {
-	viewport    viewport.Model
-	messages    []string
-	textarea    textarea.Model
-	width       int
-	height      int
-	senderStyle lipgloss.Style
-	err         error
+	channel       chan string
+	viewport      viewport.Model
+	messages      []string
+	textarea      textarea.Model
+	width         int
+	height        int
+	senderStyle   lipgloss.Style
+	receiverStyle lipgloss.Style
+	err           error
 }
 
 func initialModel() model {
@@ -51,7 +56,7 @@ func initialModel() model {
 	ta.Focus()
 
 	ta.Prompt = "┃ "
-	ta.CharLimit = 5000
+	ta.CharLimit = 2000
 
 	ta.SetHeight(2)
 
@@ -59,18 +64,20 @@ func initialModel() model {
 
 	ta.ShowLineNumbers = false
 
-	vp := viewport.New(30, 5)
+	vp := viewport.New(0, 0)
 	vp.SetContent(`Welcome to the chat room!
 Type a message and press Enter to send.`)
 
 	ta.KeyMap.InsertNewline.SetEnabled(false)
 
 	return model{
-		textarea:    ta,
-		messages:    []string{},
-		viewport:    vp,
-		senderStyle: lipgloss.NewStyle().Foreground(lipgloss.Color("5")),
-		err:         nil,
+		channel:       make(chan string),
+		textarea:      ta,
+		messages:      []string{},
+		viewport:      vp,
+		senderStyle:   lipgloss.NewStyle().Foreground(lipgloss.Color("5")),
+		receiverStyle: lipgloss.NewStyle().Foreground(lipgloss.Color("229")),
+		err:           nil,
 	}
 }
 
@@ -101,19 +108,43 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyCtrlC, tea.KeyEsc:
 			return m, tea.Quit
 		case tea.KeyEnter:
-			m.messages = append(m.messages, m.senderStyle.Render("You: ")+m.textarea.Value())
+			prompt := m.textarea.Value()
+
+			m.messages = append(m.messages, m.senderStyle.Render("You: ")+prompt)
 			m.textarea.Reset()
-			textAreaHeight = 2
+			m.textarea.SetHeight(2)
+			m.viewport.Height = m.height - 3
 			m.viewport.SetContent(strings.Join(m.messages, "\n"))
 			m.viewport.GotoBottom()
+			m.textarea.Blur()
 
+			m.channel = make(chan string)
+			m.messages = append(m.messages, "")
+
+			return m, tea.Batch(
+				tiCmd,
+				listenForMessage(m.channel, prompt),
+				waitForMessage(m.channel),
+			)
 		}
-
+	case responseMsg:
+		lastIndex := len(m.messages) - 1
+		if m.messages[lastIndex] == "" {
+			m.messages[lastIndex] = m.receiverStyle.Render("Llama: ")
+		}
+		m.messages[lastIndex] = m.messages[lastIndex] + string(msg)
+		m.viewport.SetContent(strings.Join(m.messages, "\n"))
+		m.viewport.GotoBottom()
+		return m, waitForMessage(m.channel)
+	case completeMsg:
+		lastIndex := len(m.messages) - 1
+		m.messages[lastIndex] = m.messages[lastIndex] + "\n"
+		m.textarea.Focus()
+		return m, nil
 	case errMsg:
 		m.err = msg
 		return m, nil
 	}
-
 	m.viewport.Height = m.height - textAreaHeight - 1
 	m.textarea.SetHeight(textAreaHeight)
 
