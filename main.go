@@ -47,6 +47,7 @@ type model struct {
 	height        int
 	senderStyle   lipgloss.Style
 	receiverStyle lipgloss.Style
+	quitting      bool
 	err           error
 }
 
@@ -77,6 +78,7 @@ Type a message and press Enter to send.`)
 		viewport:      vp,
 		senderStyle:   lipgloss.NewStyle().Foreground(lipgloss.Color("5")),
 		receiverStyle: lipgloss.NewStyle().Foreground(lipgloss.Color("229")),
+		quitting:      false,
 		err:           nil,
 	}
 }
@@ -88,12 +90,13 @@ func (m model) Init() tea.Cmd {
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var (
 		tiCmd tea.Cmd
-		vpCmd tea.Cmd
 	)
 
 	m.textarea, tiCmd = m.textarea.Update(msg)
 
 	textAreaHeight := m.textarea.Length()/m.textarea.Width() + 2
+	m.viewport.Height = m.height - textAreaHeight - 1
+	m.textarea.SetHeight(textAreaHeight)
 
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -102,10 +105,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.textarea.SetWidth(msg.Width)
 		m.viewport.Height = msg.Height - m.textarea.Height() - 1
 		m.viewport.Width = msg.Width
+		m.viewport.GotoBottom()
 		return m, nil
 	case tea.KeyMsg:
 		switch msg.Type {
 		case tea.KeyCtrlC, tea.KeyEsc:
+			m.viewport.Height = m.height
+			m.quitting = true
 			return m, tea.Quit
 		case tea.KeyEnter:
 			prompt := m.textarea.Value()
@@ -139,19 +145,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case completeMsg:
 		lastIndex := len(m.messages) - 1
 		m.messages[lastIndex] = m.messages[lastIndex] + "\n"
+		m.viewport.GotoBottom()
 		m.textarea.Focus()
 		return m, nil
 	case errMsg:
 		m.err = msg
 		return m, nil
 	}
-	m.viewport.Height = m.height - textAreaHeight - 1
-	m.textarea.SetHeight(textAreaHeight)
 
-	return m, tea.Batch(tiCmd, vpCmd)
+	return m, tiCmd
 }
 
 func (m model) View() string {
+	if m.quitting {
+		return m.viewport.View()
+	}
 	return fmt.Sprintf(
 		"%s\n\n%s",
 		m.viewport.View(),
