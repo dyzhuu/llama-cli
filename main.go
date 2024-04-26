@@ -86,7 +86,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	m.textarea, tiCmd = m.textarea.Update(msg)
 
-	m.textarea.SetHeight((m.textarea.Length())/m.textarea.Width() + 2)
+	textAreaHeight := m.textarea.Length()/m.textarea.Width() + 2
 
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -103,7 +103,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyEnter:
 			m.messages = append(m.messages, m.senderStyle.Render("You: ")+m.textarea.Value())
 			m.textarea.Reset()
-			m.textarea.SetHeight(2)
+			textAreaHeight = 2
 			m.viewport.SetContent(strings.Join(m.messages, "\n"))
 			m.viewport.GotoBottom()
 
@@ -113,6 +113,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = msg
 		return m, nil
 	}
+
+	m.viewport.Height = m.height - textAreaHeight - 1
+	m.textarea.SetHeight(textAreaHeight)
 
 	return m, tea.Batch(tiCmd, vpCmd)
 }
