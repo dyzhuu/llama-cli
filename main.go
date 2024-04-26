@@ -5,6 +5,7 @@ import (
 	"log"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -43,6 +44,7 @@ type model struct {
 	viewport      viewport.Model
 	messages      []string
 	textarea      textarea.Model
+	spinner       spinner.Model
 	width         int
 	height        int
 	senderStyle   lipgloss.Style
@@ -76,6 +78,7 @@ Type a message and press Enter to send.`)
 		textarea:      ta,
 		messages:      []string{},
 		viewport:      vp,
+		spinner:       spinner.New(spinner.WithSpinner(spinner.Dot)),
 		senderStyle:   lipgloss.NewStyle().Foreground(lipgloss.Color("5")),
 		receiverStyle: lipgloss.NewStyle().Foreground(lipgloss.Color("229")),
 		quitting:      false,
@@ -115,29 +118,30 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case tea.KeyEnter:
 			prompt := m.textarea.Value()
+			if prompt == "" {
+				return m, nil
+			}
 
 			m.messages = append(m.messages, m.senderStyle.Render("You: ")+prompt)
 			m.textarea.Reset()
 			m.textarea.SetHeight(2)
 			m.viewport.Height = m.height - 3
-			m.viewport.SetContent(strings.Join(m.messages, "\n"))
+			m.viewport.SetContent(strings.Join(m.messages, "\n") + "\n" + m.spinner.View())
 			m.viewport.GotoBottom()
 			m.textarea.Blur()
 
 			m.channel = make(chan string)
-			m.messages = append(m.messages, "")
+			m.messages = append(m.messages, m.receiverStyle.Render("Llama: "))
 
 			return m, tea.Batch(
 				tiCmd,
+				m.spinner.Tick,
 				listenForMessage(m.channel, prompt),
 				waitForMessage(m.channel),
 			)
 		}
 	case responseMsg:
 		lastIndex := len(m.messages) - 1
-		if m.messages[lastIndex] == "" {
-			m.messages[lastIndex] = m.receiverStyle.Render("Llama: ")
-		}
 		m.messages[lastIndex] = m.messages[lastIndex] + string(msg)
 		m.viewport.SetContent(strings.Join(m.messages, "\n"))
 		m.viewport.GotoBottom()
@@ -148,6 +152,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.viewport.GotoBottom()
 		m.textarea.Focus()
 		return m, nil
+	case spinner.TickMsg:
+		var cmd tea.Cmd
+		if m.messages[len(m.messages)-1] == m.receiverStyle.Render("Llama: ") {
+			m.spinner, cmd = m.spinner.Update(msg)
+			m.viewport.SetContent(strings.Join(m.messages, "\n") + m.spinner.View())
+		}
+		return m, cmd
 	case errMsg:
 		m.err = msg
 		return m, nil
